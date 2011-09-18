@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>CORS</title>
+</head>
+<body>
+
+<img id="img" src="15.png">
+<div id="key"></div>
+
+<script type="text/javascript" charset="utf-8">
+
+function getPNGChunks(buffer, types) {
+    var d = new Uint8Array(buffer);
+
+    // Check header.
+    if (d[0] !== 137 || d[1] !== 80 || d[2] !== 78 || d[3] !== 71 ||
+        d[4] !== 13  || d[5] !== 10 || d[6] !== 26 || d[7] !== 10) return;
+
+    var chunks = [], i = 8;
+    while (i < d.length) {
+        var length = d[i++] << 24 | d[i++] << 16 | d[i++] << 8 | d[i++];
+        var type = decodeUTF8(d.subarray(i, i + 4));
+        i += 4;
+
+        if (!types || types.indexOf(type) >= 0) {
+            chunks.push({ type: type, data: d.subarray(i, i + length) });
+        }
+
+        // Safeguard.
+        if (type === 'IEND') break;
+
+        // Skip chunk data and CRC.
+        i += length + 4;
+    }
+
+    return chunks;
+}
+
+function decodeUTF8(d) {
+    var str = '', chr = String.fromCharCode;
+    for (var i = 0; i < d.length; i++) {
+        if (d[i] <= 0x7F) str += chr(d[i]);
+        else if (d[i] <= 0xBF) throw new Error('Invalid UTF-8 codepoint');
+        else if (d[i] <= 0xDF) str += chr((d[i++] & 0x1F) << 6 | (d[i] & 0x3F));
+        else if (d[i] <= 0xEF) str += chr((d[i++] & 0x1F) << 12 | (d[i++] & 0x3F) << 6 | (d[i] & 0x3F));
+        else if (d[i] <= 0xF7) i += 3; // We can't handle these codepoints in JS, so skip.
+        else if (d[i] <= 0xFB) i += 4;
+        else if (d[i] <= 0xFD) i += 5;
+        else throw new Error('Invalid UTF-8 codepoint');
+    }
+    return str;
+}
+
+function parseJSON(chunk) {
+    var data = chunk.data;
+    for (var j = 0; data[j] > 0; j++);
+    // var compressed = data[j + 1];
+    var result = {
+        key: decodeUTF8(data.subarray(0, j)),
+        get: function() {
+            // Allow lazy decoding.
+            return JSON.parse(decodeUTF8(data.subarray(j + 2)));
+        }
+    };
+    return result;
+}
+
+var key = document.getElementById('key');
+var img = document.getElementById('img');
+var json;
+
+var xhr = new XMLHttpRequest();
+xhr.open('GET', '15.png', true);
+xhr.responseType = "arraybuffer";
+xhr.onload = function() {
+    var chunks = getPNGChunks(this.response, ['jsON']);
+    for (var i = 0; i < chunks.length; i++) {
+        var decoded = parseJSON(chunks[i]);
+        if (decoded.key == 'mapbox:grid') {
+            json = decoded.get();
+        }
+    }
+};
+xhr.send();
+
+img.onmousemove = function(ev) {
+    if (!json) return;
+    
+    var factor = json.grid.length;
+    var x = (ev.x - img.offsetLeft) / (256 / factor) | 0;
+    var y = (ev.y - img.offsetTop) / (256 / factor) | 0;
+
+    var code = json.grid[y].charCodeAt(x);
+    if (code >= 93) code--;
+    if (code >= 35) code--;
+    code -= 32;
+
+    key.innerText = json.keys[code];
+}
+
+img.onmouseout = function() {
+    key.innerText = '';
+}
+
+</script>
+
+</body>
+</html>
